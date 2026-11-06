@@ -1,0 +1,13 @@
+.venv/
+.env
+__pycache__/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.cache/
+hf/_build/
+*.mp4
+
+play/
