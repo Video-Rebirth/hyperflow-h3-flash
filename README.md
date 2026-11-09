@@ -1,5 +1,7 @@
 # HyperFlow H3 Flash
 
+[![Hacker News](assets/hacker-news-badge.svg)](https://news.ycombinator.com/item?id=50405263)
+
 HyperFlow H3 Flash is [Video Rebirth](https://www.videorebirth.com/)'s compressed, few-step version of [MiniMax-H3](https://huggingface.co/MiniMaxAI/MiniMax-H3). It generates video and synchronized stereo audio together.
 
 **[Showcase](https://www.videorebirth.com/lp/hyperflow-flash)** · **[Weights (Hugging Face)](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash)** · **[ComfyUI nodes](https://github.com/Video-Rebirth/ComfyUI-HyperFlow-Flash)** · **[GGUF setup guide](integrations/README.md)** · **[8-step LoRA for full-size MiniMax-H3](https://github.com/Video-Rebirth/hyperflow)**
