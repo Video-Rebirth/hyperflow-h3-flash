@@ -2,6 +2,7 @@
 
 - Factorized linears `<name>.down` / `<name>.up` replace the dense `attn.qkv_proj`, `attn.out_proj`, `mlp.fc1`
   and `mlp.fc2` of the blocks that store them; split `q/k/v_proj` are concatenated back into one projection.
+  Dense linears, quantized or not, stay with ComfyUI's loader.
 - Two-time checkpoints embed the step endpoint r next to t: temb = te(t) + gate * (ee(r) - te(t)).
   Text and video use (1 - sigma, 1 - sigma_next); audio uses the same pair mapped to its own shift; condition
   rows keep r = t. sigma_next comes from the running schedule in `transformer_options["sample_sigmas"]`.
@@ -13,19 +14,24 @@ import contextlib
 import logging
 import re
 from collections import defaultdict
+from collections.abc import Callable
 
 import comfy.ldm.minimax.model as packed_dit
 import torch
 from torch import nn
 
-from .gguf_io import GGUFBackend
-
 PackedModel = packed_dit.MiniMaxH3Model
 VIDEO_SHIFT_OPTION = "minimax_h3_sigma_shift_video"
 AUDIO_SHIFT_OPTION = "minimax_h3_sigma_shift_audio"
 ENDPOINT_PREFIX = "endpoint_time_embedder."
-PART = re.compile(r"^blocks\.(\d+)\.(attn\.[qkv]_proj|attn\.out_proj|mlp\.fc[12])\.(down\.weight|up\.weight|weight)$")
+PART = re.compile(
+    r"^blocks\.(\d+)\.(attn\.[qkv]_proj|attn\.out_proj|mlp\.fc[12])\."
+    r"(down\.weight|up\.weight|weight|weight_scale|comfy_quant)$"
+)
 QKV_PARTS = ("attn.q_proj", "attn.k_proj", "attn.v_proj")
+DENSE_LEAVES = ("weight", "weight_scale", "comfy_quant")
+# (tensor of the module, dense shape) -> a zero-byte weight with that shape, replaced before any forward.
+Placeholder = Callable[[torch.Tensor, tuple[int, ...]], torch.Tensor]
 # Rows of the first step share t = 0 across video and audio but not r; audio moves to the next float32 value.
 AUDIO_TIME_OFFSET = 1e-6
 
@@ -57,26 +63,28 @@ class FactorizedMLP(packed_dit.MLP):
         return self.fc2(nn.functional.silu(gate) * hidden)
 
 
-def _shape(tensor: torch.Tensor) -> tuple[int, int]:
-    return tuple(int(size) for size in tensor.tensor_shape)
+def _shape(tensor: torch.Tensor) -> tuple[int, ...]:
+    shape = getattr(tensor, "tensor_shape", None)
+    return tuple(int(size) for size in (tensor.shape if shape is None else shape))
 
 
 class FactorizedPlan:
-    """Pops the factorized tensors of every block and leaves dense placeholders for model detection."""
+    """Pops the factorized and split-q/k/v linears of every block and leaves dense placeholders for model detection."""
 
-    def __init__(self, state_dict: dict[str, torch.Tensor], backend: GGUFBackend) -> None:
-        parts: dict[int, dict[str, dict[str, torch.Tensor]]] = defaultdict(lambda: defaultdict(dict))
-        for name in list(state_dict):
+    def __init__(self, state_dict: dict[str, torch.Tensor], placeholder: Placeholder) -> None:
+        found: dict[tuple[int, str], dict[str, str]] = defaultdict(dict)
+        for name in state_dict:
             match = PART.match(name)
-            if match is None:
-                continue
-            block, module, leaf = int(match.group(1)), match.group(2), match.group(3)
-            if module in QKV_PARTS or leaf != "weight":
-                parts[block][module][leaf.removesuffix(".weight")] = state_dict.pop(name)
-        self.parts = {block: dict(modules) for block, modules in parts.items()}
+            if match is not None:
+                found[int(match.group(1)), match.group(2)][match.group(3).removesuffix(".weight")] = name
+        parts: dict[int, dict[str, dict[str, torch.Tensor]]] = defaultdict(dict)
+        for (block, module), leaves in found.items():
+            if module in QKV_PARTS or any(leaf not in DENSE_LEAVES for leaf in leaves):
+                parts[block][module] = {leaf: state_dict.pop(name) for leaf, name in leaves.items()}
+        self.parts = dict(parts)
         for block, modules in self.parts.items():
             for dense, shape, like in self._dense_shapes(modules):
-                state_dict[f"blocks.{block}.{dense}.weight"] = backend.placeholder(like, shape)
+                state_dict[f"blocks.{block}.{dense}.weight"] = placeholder(like, shape)
 
     @staticmethod
     def _out_in(part: dict[str, torch.Tensor]) -> tuple[int, int]:
@@ -105,7 +113,7 @@ class FactorizedPlan:
                 if "weight" in part:
                     out_features, in_features = _shape(part["weight"])
                     linear = ops.Linear(in_features, out_features, bias=False, dtype=dtype)
-                    linear.load_state_dict({"weight": part["weight"]}, strict=False)
+                    linear.load_state_dict(part, strict=False)
                     return linear
                 rank, in_features = _shape(part["down"])
                 out_features = _shape(part["up"])[0]

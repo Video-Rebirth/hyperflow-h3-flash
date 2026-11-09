@@ -1,6 +1,6 @@
 {
   "1": {
-    "class_type": "HyperFlowGGUFLoader",
+    "class_type": "HyperFlowLoader",
     "inputs": {
       "unet_name": "minimax_h3_fl2va_hyperflow_flash_14b-Q4_K_M.gguf"
     }

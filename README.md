@@ -25,18 +25,18 @@ HyperFlow H3 Flash is [Video Rebirth](https://www.videorebirth.com/)'s compresse
 
 ## Choose a Runtime
 
-**Decision rule:** Use **GGUF** on PCs with 64 GB of system RAM or less. Use **INT8 convrot** on data-center GPUs, or on 24 GB+ RTX GPUs with at least 69 GiB of system RAM.
+**Decision rule:** In ComfyUI on 24 GB+ RTX GPUs, use the **INT8 safetensors** (16 GB+ of system RAM; a PyTorch built for CUDA 13.0 or newer, or `--enable-triton-backend`). Use **GGUF** on smaller GPUs and in stable-diffusion.cpp or Unsloth Studio. Use the **INT8 convrot** Python package on data-center GPUs, or on 24 GB+ RTX GPUs with at least 69 GiB of system RAM.
 
 All weights are in [`VideoRebirthAI/hyperflow-h3-flash`](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash).
 
 | | GGUF | INT8 convrot |
 |---|---|---|
-| **Runtime** | [ComfyUI, Unsloth Studio, stable-diffusion.cpp](#comfyui-unsloth-studio--stable-diffusioncpp-gguf) ([setup guide](integrations/README.md)) | [This Python package](#python-package-int8-convrot) (`hyperflow-h3-flash` CLI and `diffusers`) |
+| **Runtime** | [ComfyUI, Unsloth Studio, stable-diffusion.cpp](#comfyui-unsloth-studio--stable-diffusioncpp-gguf) ([setup guide](integrations/README.md)) | [This Python package](#python-package-int8-convrot) (`hyperflow-h3-flash` CLI and `diffusers`); [ComfyUI](integrations/README.md#comfyui-int8) (`*_int8` templates) |
 | **Precision & size** | `Q3_K_M` to `Q8_0` (7.2–15.2 GB) | W8A8 INT8 + low-rank (~16 GB) |
-| **Hub folders** | `fl2va_gguf/`, `ref2va_gguf/` | `fl2va_int8_convrot/`, `ref2va_int8_convrot/` |
+| **Hub folders** | `fl2va_gguf/`, `ref2va_gguf/` | `fl2va_int8_convrot/`, `ref2va_int8_convrot/`; single-file ComfyUI copies in `fl2va_int8_convrot_comfyui/`, `ref2va_int8_convrot_comfyui/` |
 | **`ref2va` inputs** | Images | Images, videos, and audio |
 | **Target GPU** | Consumer RTX GPUs (measured on 24 GB and 32 GB) | H100 / H200 / B200 / B300 (1–8 GPUs), or 24 GB+ RTX GPUs |
-| **System RAM** | 16 GB+ | ~16 GiB without offload; ≥ 69 GiB (`fp8` text encoder) or ≥ 91 GiB (`bf16`) with offload |
+| **System RAM** | 16 GB+ | 16 GB+ in ComfyUI. Python package: ~16 GiB without offload; ≥ 69 GiB (`fp8` text encoder) or ≥ 91 GiB (`bf16`) with offload |
 
 ---
 
@@ -45,7 +45,7 @@ All weights are in [`VideoRebirthAI/hyperflow-h3-flash`](https://huggingface.co/
 
 | Quant | `fl2va_gguf/` | `ref2va_gguf/` | When to use |
 |---|---:|---:|---|
-| **`Q4_K_M`** | **9.1 GB** | **9.2 GB** | **Recommended default for 24 GB GPUs** |
+| **`Q4_K_M`** | **9.1 GB** | **9.2 GB** | **Recommended GGUF quant** |
 | `Q8_0` | 14.9 GB | 15.2 GB | Closest to full precision when VRAM and system RAM fit |
 | `Q3_K_M` | 7.2 GB | 7.4 GB | Smallest footprint (`Q4_K_S`, `Q5_K_M`, and `Q6_K` are also available) |
 
@@ -56,6 +56,7 @@ All weights are in [`VideoRebirthAI/hyperflow-h3-flash`](https://huggingface.co/
   2. Download the 15.7 GB `qwen3vl_32b_minimax_h3_nvfp4_awq` text encoder.
   3. On 16 GB or 32 GB PCs, start ComfyUI with `python main.py --fast-disk`.
   4. Open **Workflow > Browse Templates > ComfyUI-HyperFlow-Flash** and select `hyperflow_t2v`, `hyperflow_i2v`, `hyperflow_flf2v`, or `hyperflow_ref2v`.
+  5. On 24 GB+ GPUs, use the INT8 safetensors from `fl2va_int8_convrot_comfyui/` or `ref2va_int8_convrot_comfyui/` with the `*_int8` templates instead (ComfyUI-GGUF is not needed). Start ComfyUI with `--enable-triton-backend`, or use a PyTorch built for CUDA 13.0 or newer ([INT8 safetensors](integrations/README.md#comfyui-int8)).
 - **Unsloth Studio ([setup guide](integrations/README.md#unsloth-studio)):**
   1. Point `SD_CLI_PATH` at the patched `sd-cli` binary and run `unsloth studio`.
   2. Load `VideoRebirthAI/hyperflow-h3-flash` (`fl2va_gguf/` or `ref2va_gguf/`).
@@ -182,6 +183,7 @@ All runs are end-to-end at **1344×768 and 6 steps**: text encoding, transformer
 
 - **GGUF setup:** ComfyUI, `Q4_K_M`, and the 15.7 GB `nvfp4` text encoder. 32 GB and 16 GB PCs use `--fast-disk` with models on NVMe ([Host RAM](integrations/README.md#host-ram)). Peak RSS is 34–37 GiB on ≥ 64 GB PCs. Anonymous RSS is ~8–16 GiB on 32 GB PCs and ~8 GiB on 16 GB PCs.
 - **INT8 setup:** `hyperflow-h3-flash --offload stream`. It needs ≥ 91 GiB of system RAM with the `bf16` text encoder, or ~69 GiB with `fp8`. The 15 s RTX 5090 run used `fp8`.
+- **ComfyUI INT8 safetensors:** 5–15% faster end-to-end than `Q4_K_M` on the same RTX 5090 and 4090, also with 12 GiB of system RAM left to ComfyUI ([timings](integrations/README.md#int8-performance)).
 - **The INT8 transformer is 10–20% faster. GGUF needs less than half the system RAM.** The transformer takes over 80% of the time and is compute bound. ComfyUI dequantizes `Q4_K_M` weights at run time.
 - **Use `--fast-disk` on 16 GB and 32 GB PCs.** It streams unresident weights from the OS file page cache. Without it, ComfyUI-GGUF copies the 9 GB transformer into pinned RAM when VRAM overflows. 16 GB PCs then run out of RAM on 15 s clips. On 32 GB PCs, the RTX 3090 and 5090 become 13% and 21% slower (text encoding takes 27–31 s instead of 7–9 s).
 - **32 GB of VRAM holds both models.** On the RTX 5090, the text encoder and transformer stay in VRAM together (0.8 s text encoding). On 24 GB GPUs, ComfyUI swaps them between stages (10–16 s text encoding).
@@ -277,8 +279,8 @@ make lint      # ruff check + format check
 │   └── distributed.py             # Multi-GPU execution (torchrun launch, Ulysses attention, FSDP2 / rank-0 text encoder, parallel VAE)
 ├── integrations/                  # GGUF runtimes for consumer GPUs
 │   ├── README.md                  # Step-by-step setup guide for ComfyUI, Unsloth Studio, and stable-diffusion.cpp
-│   ├── ComfyUI-HyperFlow-Flash/   # Custom nodes (`loader_nodes.py`, `model_patch.py`, `gguf_io.py`; GPL-3.0)
-│   │   └── example_workflows/     # Four UI workflows (`hyperflow_t2v`, `hyperflow_i2v`, `hyperflow_flf2v`, `hyperflow_ref2v`) and API versions in `api/`
+│   ├── ComfyUI-HyperFlow-Flash/   # Custom nodes (`loader_nodes.py`, `model_patch.py`, `gguf_io.py`, `safetensors_io.py`; GPL-3.0)
+│   │   └── example_workflows/     # Four UI workflows (`hyperflow_t2v`, `hyperflow_i2v`, `hyperflow_flf2v`, `hyperflow_ref2v`), their `*_int8` copies, and API versions in `api/`
 │   └── stable-diffusion.cpp/      # `hyperflow-two-time.patch` for upstream commit `3be2378` (MIT)
 ├── examples/                      # `benchmark.py` (per-stage timings and peak memory)
 ├── tests/                         # Unit tests on tiny models (CUDA tests skip without a GPU)

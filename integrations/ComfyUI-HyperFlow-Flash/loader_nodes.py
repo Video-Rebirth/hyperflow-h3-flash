@@ -1,15 +1,17 @@
-"""ComfyUI nodes: load a HyperFlow GGUF and emit the 4, 6 or 8-step schedule it samples."""
+"""ComfyUI nodes: load a HyperFlow GGUF or safetensors checkpoint and emit the 4, 6 or 8-step schedule it samples."""
 
 from __future__ import annotations
 
 import functools
 import logging
+from types import SimpleNamespace
 
 import comfy.sd
+import comfy.utils
 import folder_paths
 import torch
 
-from .gguf_io import GGUFBackend
+from . import safetensors_io
 from .model_patch import ENDPOINT_PREFIX, FactorizedPlan, PackedModel, install_two_time
 
 # Raw interval knots by step count and the video flow shift they are mapped through.
@@ -28,21 +30,62 @@ def step_sigmas(steps: int = DEFAULT_STEPS) -> torch.Tensor:
     return (VIDEO_SHIFT * raw / (1 + (VIDEO_SHIFT - 1) * raw)).float()
 
 
+MODEL_FOLDERS = ("unet_gguf", "diffusion_models", "unet")
+
+
 def gguf_files() -> list[str]:
     names = set()
-    for key in ("unet_gguf", "diffusion_models", "unet"):
+    for key in MODEL_FOLDERS:
         if key in folder_paths.folder_names_and_paths:
             names.update(name for name in folder_paths.get_filename_list(key) if name.endswith(".gguf"))
     return sorted(names)
 
 
-def gguf_path(name: str) -> str:
-    for key in ("unet_gguf", "diffusion_models", "unet"):
+def model_path(name: str) -> str:
+    for key in MODEL_FOLDERS:
         if key in folder_paths.folder_names_and_paths:
             path = folder_paths.get_full_path(key, name)
             if path is not None:
                 return path
     raise FileNotFoundError(name)
+
+
+gguf_path = model_path
+
+
+def safetensors_files() -> list[str]:
+    """Safetensors files that carry HyperFlow metadata; other diffusion models are left out of the list."""
+    names = set()
+    for key in MODEL_FOLDERS:
+        if key not in folder_paths.folder_names_and_paths:
+            continue
+        for name in folder_paths.get_filename_list(key):
+            if name.endswith(".safetensors") and name not in names:
+                path = folder_paths.get_full_path(key, name)
+                if path is not None and safetensors_io.hyperflow_info(path) is not None:
+                    names.add(name)
+    return sorted(names)
+
+
+def pop_extras(state_dict: dict[str, torch.Tensor]):
+    """The step-endpoint gate, the stored schedule and the endpoint embedder, which the stock model does not have."""
+    gate = state_dict.pop("hyperflow_gate", None)
+    sigmas = state_dict.pop("hyperflow_sigmas", None)
+    endpoint_sd = {
+        name.removeprefix(ENDPOINT_PREFIX): state_dict.pop(name)
+        for name in list(state_dict)
+        if name.startswith(ENDPOINT_PREFIX)
+    }
+    return gate, sigmas, endpoint_sd
+
+
+def packed_model(patcher, path: str) -> PackedModel:
+    if patcher is None:
+        raise RuntimeError(f"Could not detect the model type of {path}")
+    model = patcher.model.diffusion_model
+    if not isinstance(model, PackedModel):
+        raise RuntimeError(f"{path} is not a packed video+audio DiT checkpoint")
+    return model
 
 
 @functools.cache
@@ -88,25 +131,17 @@ def weights_on_disk(path: str, weights_in: str) -> bool:
 
 
 def load_hyperflow_gguf(path: str, weights_in: str = "auto"):
+    from .gguf_io import GGUFBackend
+
     backend = GGUFBackend.find()
     state_dict = backend.read(path)
-    gate = state_dict.pop("hyperflow_gate", None)
-    sigmas = state_dict.pop("hyperflow_sigmas", None)
-    endpoint_sd = {
-        name.removeprefix(ENDPOINT_PREFIX): state_dict.pop(name)
-        for name in list(state_dict)
-        if name.startswith(ENDPOINT_PREFIX)
-    }
-    plan = FactorizedPlan(state_dict, backend)
+    gate, sigmas, endpoint_sd = pop_extras(state_dict)
+    plan = FactorizedPlan(state_dict, backend.placeholder)
     ops = backend.operations()
     patcher = comfy.sd.load_diffusion_model_state_dict(
         state_dict, model_options={"custom_operations": ops}, disable_dynamic=True
     )
-    if patcher is None:
-        raise RuntimeError(f"Could not detect the model type of {path}")
-    model = patcher.model.diffusion_model
-    if not isinstance(model, PackedModel):
-        raise RuntimeError(f"{path} is not a packed video+audio DiT checkpoint")
+    model = packed_model(patcher, path)
     factorized = plan.install(model, ops)
     if gate is not None:
         install_two_time(model, endpoint_sd, float(backend.to_float(gate).flatten()[0]), ops)
@@ -127,6 +162,76 @@ def load_hyperflow_gguf(path: str, weights_in: str = "auto"):
     patcher.size = 0
     logging.info("HyperFlow: transformer weights in %s (weights_in=%s)", "disk" if on_disk else "ram", weights_in)
     return patcher
+
+
+def load_hyperflow_safetensors(path: str):
+    info = safetensors_io.checked_info(path)
+    state_dict, metadata = comfy.utils.load_torch_file(path, return_metadata=True)
+    gate, sigmas, endpoint_sd = pop_extras(state_dict)
+    if gate is None or sigmas is None or not endpoint_sd:
+        raise RuntimeError(f"{path} has HyperFlow metadata but no step-endpoint tensors")
+    plan = FactorizedPlan(state_dict, safetensors_io.placeholder)
+    full_precision = safetensors_io.float32_tensors(state_dict)
+    patcher = comfy.sd.load_diffusion_model_state_dict(
+        state_dict, model_options={}, metadata=metadata, disable_dynamic=True
+    )
+    model = packed_model(patcher, path)
+    ops = SimpleNamespace(Linear=type(model.condition_proj))
+    factorized = plan.install(model, ops)
+    install_two_time(model, endpoint_sd, float(gate.float().flatten()[0]), ops)
+    restored = safetensors_io.keep_float32(model, full_precision)
+    restored += safetensors_io.keep_float32(model.endpoint_time_embedder, endpoint_sd)
+    chunked = safetensors_io.limit_int8_rows(model)
+    model.hyperflow_sigmas = sigmas.float().flatten().cpu()
+    patcher.size = 0
+    logging.info(
+        "HyperFlow: %s %s (layout %s), %d factorized blocks, %d fp32 tensors, %d row-chunked INT8 modules, "
+        "%d-step schedule",
+        info.get("variant", "?"),
+        info.get("weights", "?"),
+        info.get("format"),
+        factorized,
+        restored,
+        chunked,
+        model.hyperflow_sigmas.shape[0] - 1,
+    )
+    return patcher
+
+
+def load_hyperflow(path: str, weights_in: str = "auto"):
+    if path.endswith(".gguf"):
+        return load_hyperflow_gguf(path, weights_in)
+    return load_hyperflow_safetensors(path)
+
+
+WEIGHTS_IN_INPUT = (
+    list(WEIGHTS_IN),
+    {
+        "default": "auto",
+        "tooltip": "GGUF only. disk: weights that do not fit on the GPU stay in the memory-mapped file and stream "
+        "from it, for machines with little RAM; ram: copy them into RAM; auto: disk with --fast-disk or a fast "
+        "NVMe drive",
+    },
+)
+
+
+class HyperFlowLoader:
+    TITLE = "HyperFlow Loader"
+    CATEGORY = "HyperFlow"
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "load"
+    DESCRIPTION = (
+        "Loads a HyperFlow transformer from diffusion_models: a GGUF (needs ComfyUI-GGUF) or an INT8 convrot "
+        "safetensors (runs on ComfyUI's INT8 kernels)."
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        names = sorted(set(gguf_files()) | set(safetensors_files()))
+        return {"required": {"unet_name": (names,)}, "optional": {"weights_in": WEIGHTS_IN_INPUT}}
+
+    def load(self, unet_name, weights_in="auto"):
+        return (load_hyperflow(model_path(unet_name), weights_in),)
 
 
 class HyperFlowGGUFLoader:
@@ -181,5 +286,9 @@ class HyperFlowSigmas:
         return (schedule.clone().cpu(),)
 
 
-NODE_CLASS_MAPPINGS = {"HyperFlowGGUFLoader": HyperFlowGGUFLoader, "HyperFlowSigmas": HyperFlowSigmas}
+NODE_CLASS_MAPPINGS = {
+    "HyperFlowLoader": HyperFlowLoader,
+    "HyperFlowGGUFLoader": HyperFlowGGUFLoader,
+    "HyperFlowSigmas": HyperFlowSigmas,
+}
 NODE_DISPLAY_NAME_MAPPINGS = {name: node.TITLE for name, node in NODE_CLASS_MAPPINGS.items()}
