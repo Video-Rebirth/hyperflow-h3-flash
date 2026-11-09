@@ -174,17 +174,17 @@ All runs are end-to-end at **1344×768 and 6 steps**: text encoding, transformer
 <a id="rtx-gpus-in-a-home-pc-32-gb-or-16-gb-of-host-ram-q4_k_m-comfyui"></a>
 ### Consumer RTX GPUs: `t2va`
 
-| GPU | GGUF, ≥ 64 GB RAM | GGUF, 32 GB RAM | GGUF, 16 GB RAM | INT8, ≥ 69 GiB RAM |
-|---|---|---|---|---|
-| **RTX 5090 (32 GB)** | 99 s / 575 s | 118 s / 618 s | 130 s / 615 s | 92 s / 551 s |
-| **RTX 4090 (24 GB)** | 157 s / 830 s | 151 s / 815 s | 153 s / 812 s | 130 s / 750 s |
-| **RTX 3090 (24 GB)** | 315 s / 1835 s | 318 s / 1869 s | 325 s / 1866 s | 266 s / 1684 s |
-| *Peak VRAM* | *5090: 28 / 27 GiB; 24 GB: 23 / 22 GiB* | *same* | *same* | *12.0–12.5 / 21.8–22.4 GiB* |
+| GPU | ComfyUI INT8 | GGUF, ≥ 64 GB RAM | GGUF, 32 GB RAM | GGUF, 16 GB RAM | Python INT8, ≥ 69 GiB RAM |
+|---|---|---|---|---|---|
+| **RTX 5090 (32 GB)** | 83 s / 518 s | 99 s / 575 s | 118 s / 618 s | 130 s / 615 s | 92 s / 551 s |
+| **RTX 4090 (24 GB)** | 152 s / 747 s | 157 s / 830 s | 151 s / 815 s | 153 s / 812 s | 130 s / 750 s |
+| **RTX 3090 (24 GB)** | — | 315 s / 1835 s | 318 s / 1869 s | 325 s / 1866 s | 266 s / 1684 s |
+| *Peak VRAM* | *5090: 31 GiB; 24 GB: 21 GiB (5.2 s)* | *5090: 28 / 27 GiB; 24 GB: 23 / 22 GiB* | *same* | *same* | *12.0–12.5 / 21.8–22.4 GiB* |
 
+- **ComfyUI INT8 setup:** The `*_int8_convrot_comfyui/` file on ComfyUI 0.44.0 with PyTorch 2.13 + CUDA 13.0 and the `nvfp4` text encoder. These runs used separate RunPod pods (60 GB / 31 GB of system RAM) and did not save the MP4. On the same pods, `Q4_K_M` took 96 s / 562 s (5090) and 160 s / 834 s (4090), so INT8 is 5–15% faster. With 12 GiB of system RAM left to ComfyUI (a 16 GB PC) and no `--fast-disk`, INT8 took 88 s (5090) and 153 s / 821 s (4090) ([details](integrations/README.md#int8-performance)).
 - **GGUF setup:** ComfyUI, `Q4_K_M`, and the 15.7 GB `nvfp4` text encoder. 32 GB and 16 GB PCs use `--fast-disk` with models on NVMe ([Host RAM](integrations/README.md#host-ram)). Peak RSS is 34–37 GiB on ≥ 64 GB PCs. Anonymous RSS is ~8–16 GiB on 32 GB PCs and ~8 GiB on 16 GB PCs.
-- **INT8 setup:** `hyperflow-h3-flash --offload stream`. It needs ≥ 91 GiB of system RAM with the `bf16` text encoder, or ~69 GiB with `fp8`. The 15 s RTX 5090 run used `fp8`.
-- **ComfyUI INT8 safetensors:** 5–15% faster end-to-end than `Q4_K_M` on the same RTX 5090 and 4090, also with 12 GiB of system RAM left to ComfyUI ([timings](integrations/README.md#int8-performance)).
-- **The INT8 transformer is 10–20% faster. GGUF needs less than half the system RAM.** The transformer takes over 80% of the time and is compute bound. ComfyUI dequantizes `Q4_K_M` weights at run time.
+- **Python INT8 setup:** `hyperflow-h3-flash --offload stream`. It needs ≥ 91 GiB of system RAM with the `bf16` text encoder, or ~69 GiB with `fp8`, because it keeps all offloaded weights in pinned RAM. The 15 s RTX 5090 run used `fp8`.
+- **INT8 is faster in both runtimes.** The transformer takes over 80% of the time and is compute bound, and ComfyUI dequantizes `Q4_K_M` weights at run time. The Python package's INT8 transformer is 10–20% faster than GGUF.
 - **Use `--fast-disk` on 16 GB and 32 GB PCs.** It streams unresident weights from the OS file page cache. Without it, ComfyUI-GGUF copies the 9 GB transformer into pinned RAM when VRAM overflows. 16 GB PCs then run out of RAM on 15 s clips. On 32 GB PCs, the RTX 3090 and 5090 become 13% and 21% slower (text encoding takes 27–31 s instead of 7–9 s).
 - **32 GB of VRAM holds both models.** On the RTX 5090, the text encoder and transformer stay in VRAM together (0.8 s text encoding). On 24 GB GPUs, ComfyUI swaps them between stages (10–16 s text encoding).
 - **Keyframe tasks (`i2v`, `flf2v`):** See [GGUF guide: Performance](integrations/README.md#what-to-expect).
@@ -192,7 +192,7 @@ All runs are end-to-end at **1344×768 and 6 steps**: text encoding, transformer
 <a id="ref2va-on-consumer-rtx-gpus"></a>
 ### Consumer RTX GPUs: `ref2va`
 
-| GPU | INT8, 2 images | INT8, mixed | GGUF `match`, 2 images | GGUF `max`, 2 images |
+| GPU | Python INT8, 2 images | Python INT8, mixed | GGUF `match`, 2 images | GGUF `max`, 2 images |
 |---|---|---|---|---|
 | **RTX 5090 (32 GB)** | 266 s / 914 s | 503 s / 1318 s | 135 s / 660 s | 295 s / 995 s² |
 | **RTX 4090 (24 GB)** | 319 s / 1167 s | 630 s / 1702 s¹ | 194 s / 885 s | 398 s / 1275 s² |
@@ -200,7 +200,7 @@ All runs are end-to-end at **1344×768 and 6 steps**: text encoding, transformer
 | *Peak VRAM* | *19.5–19.8 / 23.3–25.6 GiB* | *19.6–20.2 / 22.8–28.5 GiB* | *5090: 31 GiB; 24 GB: 22 GiB (5.2 s)* | *5090: 30 GiB; 24 GB: 21 GiB (5.2 s)* |
 
 - **References:** Two 768p stills generated with `t2va` (a person and a street market). **Mixed** is one still, one 5.2 s reference video with its soundtrack, and one audio clip.
-- **INT8 setup:** 100–125 GB of system RAM (80–88 GiB process RSS). ¹ On 24 GB GPUs, 15 s mixed runs need `--block-chunk 16384`. Without it, they run out of VRAM.
+- **Python INT8 setup:** 100–125 GB of system RAM (80–88 GiB process RSS). ¹ On 24 GB GPUs, 15 s mixed runs need `--block-chunk 16384`. Without it, they run out of VRAM.
 - **GGUF setup:** ComfyUI on ≥ 64 GB RAM, with `hyperflow_ref2v_api.json` and the `nvfp4` text encoder. `ref_image_size` `match` (default) downscales each reference to the output's pixel area and keeps its aspect ratio. `max` downscales only above a 2048 short edge. The `max` runs used the stills upscaled to 3584×2048, the size the INT8 pipeline uses. ² `max` at 15 s needs `python main.py --disable-cuda-malloc`. The default `cudaMallocAsync` allocator fails with `CUDA error: invalid argument`.
 - **Each reference adds tokens to every step.** At a 2048 short edge, one image adds ~14,300 tokens (about seven 768p latent frames). The clip itself is 37,710 tokens at 5.2 s and 109,062 at 15 s. Attention cost grows with the square of the token count. So at 5.2 s, the INT8 transformer takes 2.6–2.9× its `t2va` time with two images and 5.2–5.8× with the mixed set.
 - **GGUF `match` is the fastest image-reference path.** It adds 24–36% to `t2v` at 5.2 s and 7–15% at 15 s. At the same reference size (`max`), GGUF is 11–25% slower than INT8 at 5.2 s and 8–9% slower at 15 s.
