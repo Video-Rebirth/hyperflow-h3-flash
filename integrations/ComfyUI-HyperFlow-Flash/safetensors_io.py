@@ -82,9 +82,11 @@ def keep_float32(root: nn.Module, tensors: dict[str, torch.Tensor]) -> int:
         except AttributeError:
             continue
         current = module._parameters.get(leaf)
-        if current is None or current.dtype == torch.float32 or tuple(current.shape) != tuple(tensor.shape):
+        if current is None or tuple(current.shape) != tuple(tensor.shape):
             continue
-        module._parameters[leaf] = nn.Parameter(tensor.to(device=current.device), requires_grad=False)
+        if current.dtype != torch.float32:
+            module._parameters[leaf] = nn.Parameter(tensor.to(device=current.device), requires_grad=False)
+        # Dynamic VRAM keeps the file's fp32 tensor and casts it to this dtype when it stages the weight.
         setattr(module, f"{leaf}_comfy_model_dtype", torch.float32)
         restored += 1
     return restored

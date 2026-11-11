@@ -164,7 +164,10 @@ def load_hyperflow_gguf(path: str, weights_in: str = "auto"):
     return patcher
 
 
-def load_hyperflow_safetensors(path: str):
+def load_hyperflow_safetensors(path: str, disable_dynamic: bool = False):
+    """Load with the patcher of ComfyUI's own loaders, so ComfyUI's memory management (dynamic VRAM, where it is
+    enabled) places the weights. `disable_dynamic` is for ComfyUI, which reloads a non-dynamic copy through
+    `cached_patcher_init`."""
     info = safetensors_io.checked_info(path)
     state_dict, metadata = comfy.utils.load_torch_file(path, return_metadata=True)
     gate, sigmas, endpoint_sd = pop_extras(state_dict)
@@ -173,9 +176,10 @@ def load_hyperflow_safetensors(path: str):
     plan = FactorizedPlan(state_dict, safetensors_io.placeholder)
     full_precision = safetensors_io.float32_tensors(state_dict)
     patcher = comfy.sd.load_diffusion_model_state_dict(
-        state_dict, model_options={}, metadata=metadata, disable_dynamic=True
+        state_dict, model_options={}, metadata=metadata, disable_dynamic=disable_dynamic
     )
     model = packed_model(patcher, path)
+    patcher.cached_patcher_init = (load_hyperflow_safetensors, (path,))
     ops = SimpleNamespace(Linear=type(model.condition_proj))
     factorized = plan.install(model, ops)
     install_two_time(model, endpoint_sd, float(gate.float().flatten()[0]), ops)
