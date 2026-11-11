@@ -119,6 +119,7 @@ End-to-end `t2v` time without saving the MP4 (`5.2 s / 15 s`; ComfyUI 0.44.0, Py
 
 | GPU, system RAM | INT8 safetensors | `Q4_K_M` GGUF | `Q8_0` GGUF |
 |---|---:|---:|---:|
+| RTX PRO 6000 (96 GB), 188 GB | 53 s / 333 s | – | – |
 | RTX 5090 (32 GB), 60 GB | 83 s / 518 s | 96 s / 562 s | 98 s / – |
 | RTX 5090, 16 GB PC¹ | 88 s / – | 102 s / – | – |
 | RTX 4090 (24 GB), 31 GB | 152 s / 747 s | 160 s / 834 s² | 173 s / – |
@@ -126,7 +127,7 @@ End-to-end `t2v` time without saving the MP4 (`5.2 s / 15 s`; ComfyUI 0.44.0, Py
 
 - **¹ 16 GB PC:** 12 GiB of system RAM left to ComfyUI; GGUF with `--fast-disk` (and `--disable-cuda-malloc` on the 4090).
 - **² 15 s with `--disable-cuda-malloc`:** with the default CUDA allocator, this run crashed.
-- **Peak VRAM, INT8, 5.2 s:** 31 GiB on the 5090, 21 GiB on the 4090. Triton and CUDA backends ran at the same speed.
+- **Peak VRAM, INT8, 5.2 s:** 39 GiB on the PRO 6000, 31 GiB on the 5090, 21 GiB on the 4090. Triton and CUDA backends ran at the same speed.
 - **Quality:** against the `BF16` GGUF (one H200, same seed, `t2v` 5.2 s), mean frame PSNR is 18.0 dB for INT8, 17.5 dB for `Q8_0`, and 14.8 dB for `Q4_K_M`.
 
 ### 4. Start ComfyUI and Open a Workflow

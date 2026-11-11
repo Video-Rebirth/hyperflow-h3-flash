@@ -172,18 +172,20 @@ encode_video(
 All runs are end-to-end at **1344×768 and 6 steps**: text encoding, transformer, and video and audio VAE decode. Each `a / b` cell is total time for a **5.2 s / 15 s** clip (124 / 362 frames).
 
 <a id="rtx-gpus-in-a-home-pc-32-gb-or-16-gb-of-host-ram-q4_k_m-comfyui"></a>
-### Consumer RTX GPUs: `t2va`
+### RTX GPUs: `t2va`
 
 | GPU | ComfyUI INT8 | GGUF, ≥ 64 GB RAM | GGUF, 32 GB RAM | GGUF, 16 GB RAM | Python INT8, ≥ 69 GiB RAM |
 |---|---|---|---|---|---|
+| **RTX PRO 6000 (96 GB)** | 53 s / 333 s | — | — | — | 61 s / 357 s |
 | **RTX 5090 (32 GB)** | 83 s / 518 s | 99 s / 575 s | 118 s / 618 s | 130 s / 615 s | 92 s / 551 s |
 | **RTX 4090 (24 GB)** | 152 s / 747 s | 157 s / 830 s | 151 s / 815 s | 153 s / 812 s | 130 s / 750 s |
 | **RTX 3090 (24 GB)** | — | 315 s / 1835 s | 318 s / 1869 s | 325 s / 1866 s | 266 s / 1684 s |
-| *Peak VRAM* | *5090: 31 GiB; 24 GB: 21 GiB (5.2 s)* | *5090: 28 / 27 GiB; 24 GB: 23 / 22 GiB* | *same* | *same* | *12.0–12.5 / 21.8–22.4 GiB* |
+| *Peak VRAM* | *PRO 6000: 39 / 49 GiB; 5090: 31 GiB; 24 GB: 21 GiB (5.2 s)* | *5090: 28 / 27 GiB; 24 GB: 23 / 22 GiB* | *same* | *same* | *PRO 6000: 77 / 86 GiB; others: 12.0–12.5 / 21.8–22.4 GiB* |
 
-- **ComfyUI INT8 setup:** The `*_int8_convrot_comfyui/` file on ComfyUI 0.44.0 with PyTorch 2.13 + CUDA 13.0 and the `nvfp4` text encoder. These runs used separate RunPod pods (60 GB / 31 GB of system RAM) and did not save the MP4. On the same pods, `Q4_K_M` took 96 s / 562 s (5090) and 160 s / 834 s (4090), so INT8 is 5–15% faster. With 12 GiB of system RAM left to ComfyUI (a 16 GB PC) and no `--fast-disk`, INT8 took 88 s (5090) and 153 s / 821 s (4090) ([details](integrations/README.md#int8-performance)).
+- **ComfyUI INT8 setup:** The `*_int8_convrot_comfyui/` file on ComfyUI 0.44.0 with PyTorch 2.13 + CUDA 13.0 and the `nvfp4` text encoder. These runs used separate RunPod pods (188 GB / 60 GB / 31 GB of system RAM on the PRO 6000 / 5090 / 4090) and did not save the MP4. On the same pods, `Q4_K_M` took 96 s / 562 s (5090) and 160 s / 834 s (4090), so INT8 is 5–15% faster. With 12 GiB of system RAM left to ComfyUI (a 16 GB PC) and no `--fast-disk`, INT8 took 88 s (5090) and 153 s / 821 s (4090) ([details](integrations/README.md#int8-performance)).
 - **GGUF setup:** ComfyUI, `Q4_K_M`, and the 15.7 GB `nvfp4` text encoder. 32 GB and 16 GB PCs use `--fast-disk` with models on NVMe ([Host RAM](integrations/README.md#host-ram)). Peak RSS is 34–37 GiB on ≥ 64 GB PCs. Anonymous RSS is ~8–16 GiB on 32 GB PCs and ~8 GiB on 16 GB PCs.
-- **Python INT8 setup:** `hyperflow-h3-flash --offload stream`. It needs ≥ 91 GiB of system RAM with the `bf16` text encoder, or ~69 GiB with `fp8`, because it keeps all offloaded weights in pinned RAM. The 15 s RTX 5090 run used `fp8`.
+- **Python INT8 setup:** `hyperflow-h3-flash --offload stream`. It needs ≥ 91 GiB of system RAM with the `bf16` text encoder, or ~69 GiB with `fp8`, because it keeps all offloaded weights in pinned RAM. The 15 s RTX 5090 run used `fp8`. On the RTX PRO 6000, `--offload auto` selects `none`: all components stay in VRAM, and the process peaks at 39 GiB of system RAM.
+- **RTX PRO 6000 (Blackwell workstation, SM120):** 1.5–1.6× faster than the RTX 5090 in both INT8 runtimes. At 15 s, Python INT8 with `none` peaks at 86 of 95 GiB of VRAM.
 - **INT8 is faster in both runtimes.** The transformer takes over 80% of the time and is compute bound, and ComfyUI dequantizes `Q4_K_M` weights at run time. The Python package's INT8 transformer is 10–20% faster than GGUF.
 - **Use `--fast-disk` on 16 GB and 32 GB PCs.** It streams unresident weights from the OS file page cache. Without it, ComfyUI-GGUF copies the 9 GB transformer into pinned RAM when VRAM overflows. 16 GB PCs then run out of RAM on 15 s clips. On 32 GB PCs, the RTX 3090 and 5090 become 13% and 21% slower (text encoding takes 27–31 s instead of 7–9 s).
 - **32 GB of VRAM holds both models.** On the RTX 5090, the text encoder and transformer stay in VRAM together (0.8 s text encoding). On 24 GB GPUs, ComfyUI swaps them between stages (10–16 s text encoding).
