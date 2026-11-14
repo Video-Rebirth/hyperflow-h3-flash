@@ -183,7 +183,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--weights", default=WEIGHTS, help="HyperFlow H3 Flash transformer Hub ID or local path")
     parser.add_argument(
         "--subfolder",
-        help="subfolder within --weights (default: fl2va_int8_convrot for t2va/fl2va, ref2va_int8_convrot for ref2va)",
+        help="subfolder within --weights (default: fl2va_int8_convrot for t2va/fl2va, ref2va_int8_convrot for ref2va; "
+        "fl2va_bf16 or ref2va_bf16 for the unquantized weights)",
     )
     parser.add_argument("--base-model", default=BASE_MODEL, help="MiniMax-H3 base model Hub ID or local path")
     parser.add_argument(

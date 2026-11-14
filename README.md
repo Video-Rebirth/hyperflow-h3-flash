@@ -38,6 +38,8 @@ All weights are in [`VideoRebirthAI/hyperflow-h3-flash`](https://huggingface.co/
 | **Target GPU** | Consumer RTX GPUs (measured on 24 GB and 32 GB) | H100 / H200 / B200 / B300 (1–8 GPUs), or 24 GB+ RTX GPUs |
 | **System RAM** | 16 GB+ | 16 GB+ in ComfyUI. Python package: ~16 GiB without offload; ≥ 69 GiB (`fp8` text encoder) or ≥ 91 GiB (`bf16`) with offload |
 
+**To re-quantize (not for generation):** `fl2va_bf16/` (27.4 GB, serves `t2va` and `fl2va`) and `ref2va_bf16/` (27.9 GB) hold the transformers before INT8 quantization. See the [model card](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash#bf16-unquantized-weights) for the layer list and the loading code.
+
 ---
 
 <a id="comfyui-unsloth-studio--stable-diffusioncpp-gguf"></a>
@@ -234,8 +236,8 @@ HyperFlow H3 Flash changes the MiniMax-H3 transformer in three ways:
 
 | Partition | Hub folders | Replaces | Dropped blocks | Factored linears | Parameters |
 |---|---|---|---|---|---|
-| `fl2va` (serves `t2va` and `fl2va`) | `fl2va_int8_convrot/`, `fl2va_gguf/` | `transformer` | 3 of 50 (blocks 6, 21, 22) | 102 | 13.7B |
-| `ref2va` | `ref2va_int8_convrot/`, `ref2va_gguf/` | `transformer_ref` | 1 of 50 (block 9) | 114 | 13.9B |
+| `fl2va` (serves `t2va` and `fl2va`) | `fl2va_int8_convrot/`, `fl2va_gguf/`, `fl2va_bf16/` | `transformer` | 3 of 50 (blocks 6, 21, 22) | 102 | 13.7B |
+| `ref2va` | `ref2va_int8_convrot/`, `ref2va_gguf/`, `ref2va_bf16/` | `transformer_ref` | 1 of 50 (block 9) | 114 | 13.9B |
 
 2. **Rotated W8A8 INT8 quantization (`convrot`):** 180 linear layers are quantized to W8A8 INT8 behind a block-diagonal Hadamard rotation.
 3. **Two-time `(t, r)` conditioning:** Every token receives the current noise level `t` and the step endpoint `r`. This enables 4-to-8-step sampling without CFG. Conditioning tokens stay at their anchor noise level (`r = t`).
